@@ -1,0 +1,388 @@
+1. 项目结构
+
+```text
+project/
+├─ server.js
+├─ package.json
+├─ .env
+└─ public/
+   ├─ admin.html
+   └─ authorize.html
+```
+
+---
+
+2. 后端 server.js
+
+```js
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { ethers } = require('ethers');
+const path = require('path');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
+
+// 后台账号
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'zhaolong123';
+const ADMIN_PASSWORD_HASH =
+  process.env.ADMIN_PASSWORD_HASH ||
+  bcrypt.hashSync(process.env.ADMIN_PASSWORD || 'Aaqweewq1', 10);
+
+// 链配置
+const RPC_URL = process.env.RPC_URL || 'http://127.0.0.1:8545';
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS || '';
+const CHAIN_ID = process.env.CHAIN_ID || '31337';
+
+// ERC20 最小 ABI
+const ERC20_ABI = [
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+  'function balanceOf(address account) view returns (uint256)'
+];
+
+function provider() {
+  return new ethers.JsonRpcProvider(RPC_URL);
+}
+
+function readContract() {
+  if (!CONTRACT_ADDRESS) throw new Error('CONTRACT_ADDRESS 未配置');
+  return new ethers.Contract(CONTRACT_ADDRESS, ERC20_ABI, provider());
+}
+
+// 页面路由
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('/authorize', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'authorize.html'));
+});
+
+// 登录
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body || {};
+
+  if (username !== ADMIN_USERNAME) {
+    return res.status(401).json({ ok: false, msg: '账号或密码错误' });
+  }
+
+  const passOk = await bcrypt.compare(password || '', ADMIN_PASSWORD_HASH);
+  if (!passOk) {
+    return res.status(401).json({ ok: false, msg: '账号或密码错误' });
+  }
+
+  const token = jwt.sign(
+    { username, role: 'admin' },
+    JWT_SECRET,
+    { expiresIn: '2h' }
+  );
+
+  res.json({ ok: true, token });
+});
+
+// JWT 校验
+function auth(req, res, next) {
+  const h = req.headers.authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : '';
+
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ ok: false, msg: '未登录或 token 过期' });
+  }
+}
+
+app.get('/api/me', auth, (req, res) => {
+  res.json({ ok: true, user: req.user });
+});
+
+app.get('/api/config', (req, res) => {
+  res.json({
+    ok: true,
+    contractAddress: CONTRACT_ADDRESS,
+    chainId: CHAIN_ID
+  });
+});
+
+// 查询授权额度
+app.get('/api/allowance', auth, async (req, res) => {
+  try {
+    const { owner, spender } = req.query;
+    if (!owner || !spender) {
+      return res.status(400).json({ ok: false, msg: '缺少 owner 或 spender' });
+    }
+
+    const c = readContract();
+    const value = await c.allowance(owner, spender);
+
+    res.json({ ok: true, allowance: value.toString() });
+  } catch (e) {
+    res.status(500).json({ ok: false, msg: e.message });
+  }
+});
+
+// 查询余额
+app.get('/api/balance/:address', auth, async (req, res) => {
+  try {
+    const c = readContract();
+    const value = await c.balanceOf(req.params.address);
+    res.json({ ok: true, balance: value.toString() });
+  } catch (e) {
+    res.status(500).json({ ok: false, msg: e.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`后台链接: http://localhost:${PORT}/admin`);
+  console.log(`授权链接示例: http://localhost:${PORT}/authorize?spender=0x...&amount=100`);
+});
+```
+
+---
+
+3. 后台页面 public/admin.html
+
+```html
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>后台 - 生成授权链接</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 760px; margin: 30px auto; padding: 0 16px; }
+    input, button { padding: 8px; margin: 4px 0; }
+    input { width: 100%; box-sizing: border-box; }
+    button { cursor: pointer; }
+    hr { margin: 24px 0; }
+    .result { margin-top: 10px; color: #0b6; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h2>后台登录</h2>
+  <input id="username" placeholder="账号" value="zhaolong123" />
+  <input id="password" type="password" placeholder="密码" />
+  <button onclick="login()">登录</button>
+  <span id="loginStatus"></span>
+
+  <hr />
+
+  <h2>生成前端授权链接</h2>
+  <input id="spender" placeholder="被授权地址 spender，例如 0x..." />
+  <input id="amount" placeholder="授权数量，整数，例如 100" />
+  <button onclick="generateLink()">生成授权链接</button>
+  <div id="linkResult" class="result"></div>
+
+  <hr />
+
+  <h2>查询 allowance</h2>
+  <input id="owner" placeholder="owner 地址" />
+  <input id="spenderQuery" placeholder="spender 地址" />
+  <button onclick="queryAllowance()">查询</button>
+  <div id="allowanceResult" class="result"></div>
+
+  <script>
+    let token = localStorage.getItem('token') || '';
+
+    async function login() {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      const r = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+
+      const j = await r.json();
+      if (!j.ok) return alert(j.msg || '登录失败');
+
+      token = j.token;
+      localStorage.setItem('token', token);
+      document.getElementById('loginStatus').innerText = '已登录';
+    }
+
+    function generateLink() {
+      const spender = document.getElementById('spender').value.trim();
+      const amount = document.getElementById('amount').value.trim();
+
+      if (!spender || !amount) return alert('填写 spender 和 amount');
+
+      const base = location.origin;
+      const url = `${base}/authorize?spender=${encodeURIComponent(spender)}&amount=${encodeURIComponent(amount)}`;
+
+      document.getElementById('linkResult').innerText = url;
+      // 自动复制
+      navigator.clipboard?.writeText(url);
+      alert('授权链接已生成并复制到剪贴板');
+    }
+
+    async function queryAllowance() {
+      const owner = document.getElementById('owner').value.trim();
+      const spender = document.getElementById('spenderQuery').value.trim();
+
+      if (!owner || !spender) return alert('填写 owner 和 spender');
+
+      const r = await fetch(`/api/allowance?owner=${owner}&spender=${spender}`, {
+        headers: { Authorization: 'Bearer ' + token }
+      });
+
+      const j = await r.json();
+      if (!j.ok) return alert(j.msg || '查询失败');
+
+      document.getElementById('allowanceResult').innerText = 'allowance: ' + j.allowance;
+    }
+  </script>
+</body>
+</html>
+```
+
+---
+
+4. 前端授权页面 public/authorize.html
+
+```html
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>合约授权</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 640px; margin: 30px auto; padding: 0 16px; }
+    input, button { padding: 8px; margin: 4px 0; }
+    input { width: 100%; box-sizing: border-box; }
+    button { cursor: pointer; }
+    hr { margin: 24px 0; }
+    .result { margin-top: 10px; color: #0b6; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h2>ERC20 授权</h2>
+
+  <div>当前钱包：<span id="wallet">未连接</span></div>
+  <button onclick="connectWallet()">连接 MetaMask</button>
+
+  <hr />
+
+  <label>被授权地址 spender</label>
+  <input id="spender" placeholder="0x..." />
+
+  <label>授权数量</label>
+  <input id="amount" placeholder="整数，例如 100" />
+
+  <button onclick="approve()">确认授权</button>
+  <div id="txResult" class="result"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js"></script>
+  <script>
+    let provider, signer, userAddress, contractAddress;
+
+    const ERC20_ABI = [
+      'function approve(address spender, uint256 amount) returns (bool)'
+    ];
+
+    // 从 URL 读取参数
+    const params = new URLSearchParams(location.search);
+    const spenderFromUrl = params.get('spender') || '';
+    const amountFromUrl = params.get('amount') || '';
+
+    document.getElementById('spender').value = spenderFromUrl;
+    document.getElementById('amount').value = amountFromUrl;
+
+    async function loadConfig() {
+      const r = await fetch('/api/config');
+      const j = await r.json();
+      if (j.ok) contractAddress = j.contractAddress;
+    }
+    loadConfig();
+
+    async function connectWallet() {
+      if (!window.ethereum) return alert('请安装 MetaMask');
+
+      provider = new ethers.BrowserProvider(window.ethereum);
+      await provider.send('eth_requestAccounts', []);
+
+      signer = await provider.getSigner();
+      userAddress = await signer.getAddress();
+
+      document.getElementById('wallet').innerText = userAddress;
+    }
+
+    async function approve() {
+      if (!signer) return alert('请先连接钱包');
+      if (!contractAddress) return alert('合约地址未配置');
+
+      const spender = document.getElementById('spender').value.trim();
+      const amount = document.getElementById('amount').value.trim();
+
+      if (!spender || !amount) return alert('填写 spender 和 amount');
+
+      const c = new ethers.Contract(contractAddress, ERC20_ABI, signer);
+      const tx = await c.approve(spender, amount);
+
+      document.getElementById('txResult').innerText = '交易已发送：' + tx.hash;
+      await tx.wait();
+      document.getElementById('txResult').innerText += ' 已确认';
+    }
+  </script>
+</body>
+</html>
+```
+
+---
+
+5. package.json 和 .env
+
+package.json：
+
+```json
+{
+  "name": "contract-auth-admin",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.2",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
+```
+
+.env：
+
+```env
+PORT=3000
+JWT_SECRET=请换成一串很长的随机字符串
+
+ADMIN_USERNAME=zhaolong123
+ADMIN_PASSWORD=Aaqweewq1
+
+RPC_URL=http://127.0.0.1:8545
+CONTRACT_ADDRESS=0x你的合约地址
+CHAIN_ID=31337
+```
+
+---
+
+6. 运行与访问
+
+```bash
+npm install
+npm start
+```
