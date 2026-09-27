@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>电商价格采集对比工具</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <h1>🛒 电商商品价格自动化采集与对比</h1>
+      <p class="subtitle">京东 · 淘宝 · 拼多多 · 关键词搜索 → 清洗去重 → 排序对比 → 性价比推荐</p>
+      <form id="search-form" class="search-form">
+        <input id="keyword" type="text" placeholder="输入商品关键词，如 蓝牙耳机 / 手机 / 抽纸" value="蓝牙耳机" required />
+        <div class="platform-pick">
+          <label><input type="checkbox" value="jd" checked /> 京东</label>
+          <label><input type="checkbox" value="taobao" checked /> 淘宝</label>
+          <label><input type="checkbox" value="pdd" checked /> 拼多多</label>
+        </div>
+        <div class="limit-box">
+          <span>每平台</span>
+          <input id="limit" type="number" min="1" max="40" value="8" />
+          <span>条</span>
+        </div>
+        <button type="submit" id="run-btn">运行采集</button>
+      </form>
+      <div id="status" class="status"></div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 摘要卡片 -->
+    <section class="cards" id="cards" hidden>
+      <div class="card"><div class="card-label">总商品</div><div class="card-value" id="c-total">-</div></div>
+      <div class="card"><div class="card-label">最低价</div><div class="card-value" id="c-min">-</div></div>
+      <div class="card"><div class="card-label">最高价</div><div class="card-value" id="c-max">-</div></div>
+      <div class="card"><div class="card-label">均价</div><div class="card-value" id="c-avg">-</div></div>
+      <div class="card highlight"><div class="card-label">性价比推荐</div><div class="card-value" id="c-rec">-</div></div>
+    </section>
+
+    <!-- 图表 -->
+    <section class="charts" id="charts" hidden>
+      <div class="chart-box"><h3>各平台价格对比</h3><canvas id="chart-platform" height="220"></canvas></div>
+      <div class="chart-box"><h3>价格分布（按平台）</h3><canvas id="chart-dist" height="220"></canvas></div>
+      <div class="chart-box"><h3>价格-销量散点（★推荐）</h3><canvas id="chart-scatter" height="220"></canvas></div>
+    </section>
+
+    <!-- 平台横向对比 -->
+    <section id="platform-section" hidden>
+      <h2>平台横向对比</h2>
+      <div class="table-wrap"><table id="platform-table" class="data-table"></table></div>
+    </section>
+
+    <!-- 商品列表 -->
+    <section id="items-section" hidden>
+      <div class="section-head">
+        <h2>商品列表（按价格升序）</h2>
+        <div class="legend">
+          <span class="badge rec">★ 性价比推荐</span>
+          <span class="badge pf jd">京东</span>
+          <span class="badge pf taobao">淘宝</span>
+          <span class="badge pf pdd">拼多多</span>
+        </div>
+      </div>
+      <div class="table-wrap"><table id="items-table" class="data-table"></table></div>
+    </section>
+
+    <!-- 原始采集示例（初始化展示） -->
+    <section id="raw-section" hidden>
+      <details>
+        <summary>📦 采集器原始输出示例（未清洗，<span id="raw-count">0</span> 条）</summary>
+        <p class="hint">以下为采集阶段原始数据形态，经清洗去重排序后即得上方结果示例。</p>
+        <div class="table-wrap"><table id="raw-table" class="data-table raw"></table></div>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <p>price_tracker · CLI: <code>python -m price_tracker.cli &lt;关键词&gt; --help</code> · 数据来源：仿真演示（真实抓取需登录态/签名）</p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
